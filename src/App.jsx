@@ -30,6 +30,7 @@ function App() {
   const [page, setPage] = useState("dashboard");
 
   const videoRef = useRef(null);
+  const streamRef = useRef(null);
 
   // ================= FIREBASE =================
   useEffect(() => {
@@ -71,21 +72,37 @@ function App() {
     });
   };
 
-  // ================= CAMERA =================
+  // ================= CAMERA (FIXED) =================
   const startCamera = async () => {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user" },
-    });
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user", // camera trước
+        },
+      });
 
-    if (videoRef.current) {
-      videoRef.current.srcObject = stream;
+      streamRef.current = stream;
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+
+        // mirror giống selfie
+        videoRef.current.style.transform = "scaleX(-1)";
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Không mở được camera");
     }
-  } catch (err) {
-    alert("Không mở được camera");
-  }
-};
-videoRef.current.style.transform = "scaleX(-1)";
+  };
+
+  // ================= CLEANUP CAMERA =================
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, []);
 
   // ================= FILTER =================
   const filtered = students.filter((s) =>
