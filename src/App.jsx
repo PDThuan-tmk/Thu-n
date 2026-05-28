@@ -73,18 +73,19 @@ function App() {
 
   // ================= CAMERA =================
   const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-      });
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user" },
+    });
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-    } catch (err) {
-      alert("Không mở được camera");
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
     }
-  };
+  } catch (err) {
+    alert("Không mở được camera");
+  }
+};
+videoRef.current.style.transform = "scaleX(-1)";
 
   // ================= FILTER =================
   const filtered = students.filter((s) =>
