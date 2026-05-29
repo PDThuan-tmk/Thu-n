@@ -30,9 +30,11 @@ function App() {
   const [studentClass, setStudentClass] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState("dashboard");
+  const [modelsLoaded, setModelsLoaded] = useState(false);
 
   const videoRef = useRef(null);
   const intervalRef = useRef(null);
+  const streamRef = useRef(null);
 
   // ================= FIREBASE =================
   useEffect(() => {
@@ -47,23 +49,25 @@ function App() {
     return () => unsub();
   }, []);
 
-  // ================= LOAD AI MODELS (SAFE) =================
+  // ================= LOAD AI MODELS =================
   useEffect(() => {
     const loadModels = async () => {
       try {
         await faceapi.nets.tinyFaceDetector.loadFromUri("/models");
         await faceapi.nets.faceLandmark68Net.loadFromUri("/models");
         await faceapi.nets.faceRecognitionNet.loadFromUri("/models");
+
+        setModelsLoaded(true);
         console.log("AI models loaded");
       } catch (err) {
-        console.log("Model load error:", err);
+        console.log("Model error:", err);
       }
     };
 
     loadModels();
   }, []);
 
-  // ================= ADD STUDENT =================
+  // ================= ADD =================
   const addStudent = async () => {
     if (!name || !studentClass) return;
 
@@ -83,19 +87,21 @@ function App() {
     await deleteDoc(doc(db, "students", id));
   };
 
-  // ================= TOGGLE STATUS =================
+  // ================= TOGGLE =================
   const toggleStatus = async (s) => {
     await updateDoc(doc(db, "students", s.firebaseId), {
       status: s.status === "Có mặt" ? "Vắng" : "Có mặt",
     });
   };
 
-  // ================= CAMERA (SAFE) =================
+  // ================= CAMERA =================
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: { facingMode: "user" },
       });
+
+      streamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -106,42 +112,58 @@ function App() {
     }
   };
 
-  // ================= AI DETECT (SAFE + NO CRASH) =================
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+    }
+  };
+
+  // ================= AI =================
   const startAI = () => {
-    if (!videoRef.current) return;
+    if (!modelsLoaded) {
+      alert("AI chưa load xong");
+      return;
+    }
+
+    if (intervalRef.current) clearInterval(intervalRef.current);
 
     intervalRef.current = setInterval(async () => {
       try {
+        if (!videoRef.current) return;
+
         const detections = await faceapi.detectAllFaces(
           videoRef.current,
           new faceapi.TinyFaceDetectorOptions()
         );
 
-        console.log("AI detect:", detections.length);
+        console.log("Faces:", detections.length);
 
-        // demo điểm danh đơn giản
+        // 👉 demo: random học sinh
         if (detections.length > 0 && students.length > 0) {
-          const s = students[0];
+          const random = students[Math.floor(Math.random() * students.length)];
 
-          await updateDoc(doc(db, "students", s.firebaseId), {
+          await updateDoc(doc(db, "students", random.firebaseId), {
             status: "Có mặt",
           });
         }
       } catch (err) {
         console.log("AI error:", err);
       }
-    }, 3000);
+    }, 2500);
   };
 
   const stopAI = () => {
-    clearInterval(intervalRef.current);
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
   };
 
   // ================= FILTER =================
   const filtered = students.filter((s) =>
-    s.name.toLowerCase().includes(search.toLowerCase()) ||
-    s.class.toLowerCase().includes(search.toLowerCase()) ||
-    s.id.toLowerCase().includes(search.toLowerCase())
+    (s.name || "").toLowerCase().includes(search.toLowerCase()) ||
+    (s.class || "").toLowerCase().includes(search.toLowerCase()) ||
+    (s.id || "").toLowerCase().includes(search.toLowerCase())
   );
 
   // ================= CHART =================
@@ -166,17 +188,9 @@ function App() {
       <div style={{ width: 250, background: "#1e293b", color: "white", padding: 20 }}>
         <h2>SMART SCHOOL</h2>
 
-        <p onClick={() => setPage("dashboard")} style={{ cursor: "pointer" }}>
-          🏠 Dashboard
-        </p>
-
-        <p onClick={() => setPage("students")} style={{ cursor: "pointer" }}>
-          👨‍🎓 Học sinh
-        </p>
-
-        <p onClick={() => setPage("camera")} style={{ cursor: "pointer" }}>
-          📷 Camera AI
-        </p>
+        <p onClick={() => setPage("dashboard")} style={{ cursor: "pointer" }}>🏠 Dashboard</p>
+        <p onClick={() => setPage("students")} style={{ cursor: "pointer" }}>👨‍🎓 Học sinh</p>
+        <p onClick={() => setPage("camera")} style={{ cursor: "pointer" }}>📷 Camera AI</p>
       </div>
 
       {/* MAIN */}
@@ -204,17 +218,8 @@ function App() {
           <div>
             <h1>Học sinh</h1>
 
-            <input
-              placeholder="Tên"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-
-            <input
-              placeholder="Lớp"
-              value={studentClass}
-              onChange={(e) => setStudentClass(e.target.value)}
-            />
+            <input placeholder="Tên" value={name} onChange={(e) => setName(e.target.value)} />
+            <input placeholder="Lớp" value={studentClass} onChange={(e) => setStudentClass(e.target.value)} />
 
             <button onClick={addStudent}>Thêm</button>
 
@@ -279,12 +284,9 @@ function App() {
             <br />
 
             <button onClick={startCamera}>Bật camera</button>
-            <button onClick={startAI} style={{ marginLeft: 10 }}>
-              Start AI
-            </button>
-            <button onClick={stopAI} style={{ marginLeft: 10 }}>
-              Stop AI
-            </button>
+            <button onClick={stopCamera} style={{ marginLeft: 10 }}>Tắt camera</button>
+            <button onClick={startAI} style={{ marginLeft: 10 }}>Start AI</button>
+            <button onClick={stopAI} style={{ marginLeft: 10 }}>Stop AI</button>
           </div>
         )}
 

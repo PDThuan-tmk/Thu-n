@@ -1,0 +1,15 @@
+# dependencies
+node_modules/
+
+# build
+dist/
+
+# AI models (QUAN TRỌNG)
+public/models/
+
+# env
+.env
+.env.local
+
+# system
+.DS_Store
