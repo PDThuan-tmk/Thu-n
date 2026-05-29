@@ -9,7 +9,6 @@ import {
   updateDoc
 } from "firebase/firestore";
 
-import * as faceapi from "face-api.js";
 import Papa from "papaparse";
 import * as XLSX from "xlsx";
 
@@ -23,35 +22,33 @@ function App() {
   const [name, setName] = useState("");
   const [studentClass, setStudentClass] = useState("");
   const [imageUrl, setImageUrl] = useState("");
-  const [page, setPage] = useState("dashboard");
+
+  const [page, setPage] = useState("students");
+
+  const [selectedBlock, setSelectedBlock] = useState(null);
+  const [selectedClass, setSelectedClass] = useState(null);
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
 
-  // ================= FIREBASE =================
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "students"), (snapshot) => {
-      let data = snapshot.docs.map((docSnap) => ({
-        firebaseId: docSnap.id,
-        ...docSnap.data()
-      }));
+      const data = snapshot.docs.map(d => ({ firebaseId: d.id, ...d.data() }));
 
-      // remove duplicates by id (fix lỗi import bị lặp)
-      const uniqueMap = new Map();
+      const map = new Map();
       data.forEach(s => {
         const key = s.id || s.firebaseId;
-        if (!uniqueMap.has(key)) uniqueMap.set(key, s);
+        if (!map.has(key)) map.set(key, s);
       });
 
-      setStudents([...uniqueMap.values()]);
+      setStudents([...map.values()]);
     });
 
     return () => unsub();
   }, []);
 
-  // ================= ADD =================
   const addStudent = async () => {
-    if (!name || !studentClass || !imageUrl) return;
+    if (!name || !studentClass) return;
 
     await addDoc(collection(db, "students"), {
       id: "HS" + Date.now().toString().slice(-6),
@@ -66,201 +63,101 @@ function App() {
     setImageUrl("");
   };
 
-  // ================= DELETE =================
   const deleteStudent = async (id) => {
     await deleteDoc(doc(db, "students", id));
   };
 
-  // ================= TOGGLE STATUS =================
-  const toggleStatus = async (firebaseId, current) => {
-    await updateDoc(doc(db, "students", firebaseId), {
+  const toggleStatus = async (id, current) => {
+    await updateDoc(doc(db, "students", id), {
       status: current === "Có mặt" ? "Vắng" : "Có mặt"
     });
   };
 
-  // ================= CAMERA =================
-  const startCamera = async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-    streamRef.current = stream;
-    videoRef.current.srcObject = stream;
-    await videoRef.current.play().catch(() => {});
-  };
+  const structured = useMemo(() => {
+    const res = {};
 
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-    }
-  };
+    students.forEach(s => {
+      const cls = (s.class || "").toUpperCase();
+      const block = cls.match(/\d+/)?.[0] || "KHAC";
 
-  // ================= IMPORT =================
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+      if (!res[block]) res[block] = {};
+      if (!res[block][cls]) res[block][cls] = [];
 
-    const reader = new FileReader();
-
-    reader.onload = async (event) => {
-      const data = event.target.result;
-      let rows = [];
-
-      if (file.name.endsWith(".csv")) {
-        rows = Papa.parse(data, { header: true }).data;
-      } else {
-        const wb = XLSX.read(data, { type: "binary" });
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        rows = XLSX.utils.sheet_to_json(sheet);
-      }
-
-      for (const row of rows) {
-        if (!row.name || !row.class) continue;
-
-        await addDoc(collection(db, "students"), {
-          id: "HS" + Date.now().toString().slice(-6) + Math.random(),
-          name: row.name,
-          class: row.class.trim().toUpperCase(),
-          imageUrl: row.imageUrl || "",
-          status: "Vắng"
-        });
-      }
-
-      alert("Import thành công!");
-    };
-
-    reader.readAsBinaryString(file);
-  };
-
-  // ================= STATS =================
-  const present = students.filter(s => s.status === "Có mặt").length;
-  const absent = students.filter(s => s.status === "Vắng").length;
-
-  const chartData = {
-    labels: ["Có mặt", "Vắng"],
-    datasets: [{ data: [present, absent] }]
-  };
-
-  // ================= GROUP + SORT FIXED =================
-  const groupedStudents = useMemo(() => {
-    const sorted = [...students]
-      .sort((a, b) => {
-        if ((a.class || "") !== (b.class || "")) {
-          return (a.class || "").localeCompare(b.class || "");
-        }
-        return (a.name || "").localeCompare(b.name || "", "vi");
-      });
-
-    const groups = {};
-
-    sorted.forEach(s => {
-      const key = (s.class || "Chưa phân lớp").trim().toUpperCase();
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(s);
+      res[block][cls].push(s);
     });
 
-    return groups;
+    Object.keys(res).forEach(b => {
+      Object.keys(res[b]).forEach(c => {
+        res[b][c].sort((a,b)=> (a.name||"").localeCompare(b.name||"","vi"));
+      });
+    });
+
+    return res;
   }, [students]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-sky-50 via-white to-emerald-50">
+    <div className="min-h-screen bg-sky-50 p-6">
 
-      {/* HEADER */}
-      <div className="bg-blue-900 text-white p-4 flex justify-between items-center shadow">
+      <h1 className="text-xl font-bold mb-4">🏫 Smart School</h1>
+
+      {page === "students" && (
         <div>
-          <h1 className="text-2xl font-bold">🏫 Smart School System</h1>
-          <p className="text-sm opacity-80">Quản lý học sinh chuẩn hóa theo lớp & trạng thái</p>
-        </div>
 
-        <div className="space-x-2">
-          <button onClick={() => setPage("dashboard")} className="bg-white text-blue-900 px-3 py-1 rounded">Dashboard</button>
-          <button onClick={() => setPage("students")} className="bg-white text-blue-900 px-3 py-1 rounded">Học sinh</button>
-          <button onClick={() => setPage("camera")} className="bg-white text-blue-900 px-3 py-1 rounded">Camera</button>
-        </div>
-      </div>
-
-      <div className="p-6">
-
-        {/* DASHBOARD */}
-        {page === "dashboard" && (
-          <div>
-            <h2 className="text-xl font-bold mb-4">📊 Tổng quan</h2>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              <div className="bg-white p-4 rounded shadow border-l-4 border-blue-600">Tổng: {students.length}</div>
-              <div className="bg-white p-4 rounded shadow border-l-4 border-green-600">Có mặt: {present}</div>
-              <div className="bg-white p-4 rounded shadow border-l-4 border-red-600">Vắng: {absent}</div>
-            </div>
-
-            <div className="bg-white p-4 rounded shadow w-80">
-              <Pie data={chartData} />
-            </div>
-          </div>
-        )}
-
-        {/* STUDENTS */}
-        {page === "students" && (
-          <div>
-            <h2 className="text-xl font-bold mb-4">🎓 Danh sách học sinh (đã fix lỗi sắp xếp)</h2>
-
-            <div className="bg-white p-4 rounded shadow grid grid-cols-1 md:grid-cols-4 gap-2 mb-4">
-              <input className="border p-2 rounded" placeholder="Tên" value={name} onChange={e => setName(e.target.value)} />
-              <input className="border p-2 rounded" placeholder="Lớp" value={studentClass} onChange={e => setStudentClass(e.target.value)} />
-              <input className="border p-2 rounded" placeholder="Ảnh" value={imageUrl} onChange={e => setImageUrl(e.target.value)} />
-              <button className="bg-blue-700 text-white rounded" onClick={addStudent}>Thêm</button>
-            </div>
-
-            <div className="bg-white p-4 rounded shadow mb-4">
-              <input type="file" accept=".csv,.xlsx" onChange={handleFileUpload} />
-            </div>
-
-            <div className="space-y-6">
-              {Object.keys(groupedStudents).sort().map(className => (
-                <div key={className} className="bg-white p-4 rounded shadow">
-                  <h3 className="font-bold text-blue-800 mb-2">📚 Lớp {className}</h3>
-
-                  <table className="w-full">
-                    <thead className="bg-blue-50">
-                      <tr>
-                        <th className="p-2">Tên</th>
-                        <th>Trạng thái</th>
-                        <th>Hành động</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {groupedStudents[className].map(s => (
-                        <tr key={s.firebaseId} className="border-t">
-                          <td className="p-2">{s.name}</td>
-                          <td>
-                            <button onClick={() => toggleStatus(s.firebaseId, s.status)} className={s.status === "Có mặt" ? "text-green-600" : "text-red-600"}>
-                              {s.status}
-                            </button>
-                          </td>
-                          <td>
-                            <button className="text-red-600" onClick={() => deleteStudent(s.firebaseId)}>Xóa</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+          {!selectedBlock && (
+            <div className="grid grid-cols-3 gap-4">
+              {Object.keys(structured).sort().map(b => (
+                <div key={b} onClick={()=>setSelectedBlock(b)} className="p-4 bg-blue-100 rounded cursor-pointer">
+                  Khối {b}
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
 
-        {/* CAMERA */}
-        {page === "camera" && (
-          <div>
-            <h2 className="text-xl font-bold mb-4">📷 AI Camera</h2>
-
-            <video ref={videoRef} autoPlay playsInline className="w-80 rounded border-4 border-blue-300" />
-
-            <div className="mt-4 space-x-2">
-              <button className="bg-green-600 text-white px-4 py-2 rounded" onClick={startCamera}>Start</button>
-              <button className="bg-red-600 text-white px-4 py-2 rounded" onClick={stopCamera}>Stop</button>
+          {selectedBlock && !selectedClass && (
+            <div>
+              <button onClick={()=>setSelectedBlock(null)}>← Back</button>
+              <div className="grid grid-cols-3 gap-4">
+                {Object.keys(structured[selectedBlock]).sort().map(c => (
+                  <div key={c} onClick={()=>setSelectedClass(c)} className="p-4 bg-green-100 rounded cursor-pointer">
+                    {c}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-      </div>
+          {selectedClass && (
+            <div>
+              <button onClick={()=>setSelectedClass(null)}>← Back</button>
+
+              <table className="w-full bg-white">
+                <thead>
+                  <tr>
+                    <th>Tên</th>
+                    <th>Trạng thái</th>
+                    <th>Xóa</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {structured[selectedBlock][selectedClass].map(s => (
+                    <tr key={s.firebaseId}>
+                      <td>{s.name}</td>
+                      <td onClick={()=>toggleStatus(s.firebaseId,s.status)} className="cursor-pointer">
+                        {s.status}
+                      </td>
+                      <td>
+                        <button onClick={()=>deleteStudent(s.firebaseId)}>X</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+        </div>
+      )}
+
     </div>
   );
 }
