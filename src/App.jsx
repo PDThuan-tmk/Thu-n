@@ -179,6 +179,12 @@ export default function App() {
 
   // ================= FACE DETECTION =================
     const detectFace = async () => {
+      if (
+  !videoRef.current ||
+  videoRef.current.readyState !== 4
+) {
+  return;
+}
   console.log("DETECT RUNNING");
 
   if (!videoRef.current) {
@@ -228,9 +234,9 @@ export default function App() {
 
     await videoRef.current.play();
 
-    detectInterval.current = setInterval(async () => {
-      await detectFace();
-    }, 800);
+    detectRef.current = setInterval(async () => {
+  await detectFace();
+}, 800);
 
   } catch (err) {
     console.log(err);
@@ -239,18 +245,17 @@ export default function App() {
 
   // ================= STOP CAMERA =================
   const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current
-        .getTracks()
-        .forEach((track) => track.stop());
-    }
+  if (streamRef.current) {
+    streamRef.current.getTracks().forEach((track) => track.stop());
+  }
 
-    if (detectRef.current) {
-      clearInterval(detectRef.current);
-    }
+  if (detectRef.current) {
+    clearInterval(detectRef.current);
+    detectRef.current = null;
+  }
 
-    setFaceDetected(false);
-  };
+  setFaceDetected(false);
+};
 
   // ================= STATS =================
   const present = students.filter(
