@@ -10,6 +10,8 @@ import {
   updateDoc,
 } from "firebase/firestore";
 
+import * as faceapi from "face-api.js";
+
 import {
   Chart as ChartJS,
   ArcElement,
@@ -30,7 +32,7 @@ function App() {
   const [page, setPage] = useState("dashboard");
 
   const videoRef = useRef(null);
-  const streamRef = useRef(null);
+  const intervalRef = useRef(null);
 
   // ================= FIREBASE =================
   useEffect(() => {
@@ -45,7 +47,23 @@ function App() {
     return () => unsub();
   }, []);
 
-  // ================= ADD =================
+  // ================= LOAD AI MODELS (SAFE) =================
+  useEffect(() => {
+    const loadModels = async () => {
+      try {
+        await faceapi.nets.tinyFaceDetector.loadFromUri("/models");
+        await faceapi.nets.faceLandmark68Net.loadFromUri("/models");
+        await faceapi.nets.faceRecognitionNet.loadFromUri("/models");
+        console.log("AI models loaded");
+      } catch (err) {
+        console.log("Model load error:", err);
+      }
+    };
+
+    loadModels();
+  }, []);
+
+  // ================= ADD STUDENT =================
   const addStudent = async () => {
     if (!name || !studentClass) return;
 
@@ -72,37 +90,52 @@ function App() {
     });
   };
 
-  // ================= CAMERA (FIXED) =================
+  // ================= CAMERA (SAFE) =================
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user", // camera trước
-        },
+        video: true,
       });
-
-      streamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-
-        // mirror giống selfie
-        videoRef.current.style.transform = "scaleX(-1)";
       }
     } catch (err) {
-      console.error(err);
+      console.log("Camera error:", err);
       alert("Không mở được camera");
     }
   };
 
-  // ================= CLEANUP CAMERA =================
-  useEffect(() => {
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
+  // ================= AI DETECT (SAFE + NO CRASH) =================
+  const startAI = () => {
+    if (!videoRef.current) return;
+
+    intervalRef.current = setInterval(async () => {
+      try {
+        const detections = await faceapi.detectAllFaces(
+          videoRef.current,
+          new faceapi.TinyFaceDetectorOptions()
+        );
+
+        console.log("AI detect:", detections.length);
+
+        // demo điểm danh đơn giản
+        if (detections.length > 0 && students.length > 0) {
+          const s = students[0];
+
+          await updateDoc(doc(db, "students", s.firebaseId), {
+            status: "Có mặt",
+          });
+        }
+      } catch (err) {
+        console.log("AI error:", err);
       }
-    };
-  }, []);
+    }, 3000);
+  };
+
+  const stopAI = () => {
+    clearInterval(intervalRef.current);
+  };
 
   // ================= FILTER =================
   const filtered = students.filter((s) =>
@@ -210,13 +243,11 @@ function App() {
                     <td>{s.id}</td>
                     <td>{s.name}</td>
                     <td>{s.class}</td>
-
                     <td>
                       <button onClick={() => toggleStatus(s)}>
                         {s.status}
                       </button>
                     </td>
-
                     <td>
                       <button onClick={() => deleteStudent(s.firebaseId)}>
                         Xóa
@@ -247,8 +278,12 @@ function App() {
 
             <br />
 
-            <button onClick={startCamera} style={{ marginTop: 10 }}>
-              Bật camera
+            <button onClick={startCamera}>Bật camera</button>
+            <button onClick={startAI} style={{ marginLeft: 10 }}>
+              Start AI
+            </button>
+            <button onClick={stopAI} style={{ marginLeft: 10 }}>
+              Stop AI
             </button>
           </div>
         )}
