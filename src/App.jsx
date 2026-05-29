@@ -60,22 +60,27 @@ function App() {
   }, []);
 
   // ================= LOAD AI MODELS =================
-  useEffect(() => {
-    const loadModels = async () => {
-      try {
-        await faceapi.nets.tinyFaceDetector.loadFromUri("/models");
-        await faceapi.nets.faceLandmark68Net.loadFromUri("/models");
-        await faceapi.nets.faceRecognitionNet.loadFromUri("/models");
+ useEffect(() => {
+  const loadModels = async () => {
+    try {
+      const MODEL_URL = "/models";
 
-        setModelsLoaded(true);
-        console.log("AI models loaded");
-      } catch (err) {
-        console.log("Model error:", err);
-      }
-    };
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+      ]);
 
-    loadModels();
-  }, []);
+      setModelsLoaded(true);
+      console.log("✅ AI models loaded");
+    } catch (err) {
+      console.log("❌ Model load failed:", err);
+      setModelsLoaded(false);
+    }
+  };
+
+  loadModels();
+}, []);
 
   // ================= ADD =================
   const addStudent = async () => {
