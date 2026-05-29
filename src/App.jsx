@@ -64,24 +64,29 @@ export default function App() {
 
   // ================= LOAD AI =================
   useEffect(() => {
-    const loadModels = async () => {
-      try {
-        await faceapi.nets.tinyFaceDetector.loadFromUri("/models");
+  const loadModels = async () => {
+  try {
+    console.log("START LOAD MODELS");
 
-        await faceapi.nets.faceLandmark68Net.loadFromUri("/models");
+    await faceapi.nets.tinyFaceDetector.loadFromUri("/models");
+    console.log("LOADED tinyFaceDetector");
 
-        await faceapi.nets.faceRecognitionNet.loadFromUri("/models");
+    await faceapi.nets.faceLandmark68Net.loadFromUri("/models");
+    console.log("LOADED faceLandmark68Net");
 
-        setModelsLoaded(true);
+    await faceapi.nets.faceRecognitionNet.loadFromUri("/models");
+    console.log("LOADED faceRecognitionNet");
 
-        console.log("AI Ready");
-      } catch (err) {
-        console.log(err);
-      }
-    };
+    setModelsLoaded(true);
+    console.log("AI READY TRUE");
 
-    loadModels();
-  }, []);
+  } catch (err) {
+    console.log("MODEL LOAD ERROR:", err);
+  }
+};
+
+  loadModels();
+}, []);
 
   // ================= ADD STUDENT =================
   const addStudent = async () => {
@@ -178,41 +183,31 @@ export default function App() {
   };
 
   // ================= FACE DETECTION =================
-    const detectFace = async () => {
-      if (
-  !videoRef.current ||
-  videoRef.current.readyState !== 4
-) {
-  return;
-}
+const detectFace = async () => {
+  if (!modelsLoaded) return;
+
+  // 🔥 CHECK VIDEO Ở ĐÂY
+  if (!videoRef.current || videoRef.current.readyState !== 4) {
+    return;
+  }
+
   console.log("DETECT RUNNING");
 
-  if (!videoRef.current) {
-    console.log("NO VIDEO");
-    return;
-  }
-
-  if (!modelsLoaded) {
-    console.log("MODELS NOT LOADED");
-    return;
-  }
-
   try {
-    const detection = await faceapi.detectSingleFace(
-      videoRef.current,
-      new faceapi.TinyFaceDetectorOptions({
-        inputSize: 416,
-        scoreThreshold: 0.2,
-      })
-    );
+    const detection = await faceapi
+  .detectSingleFace(
+    videoRef.current,
+    new faceapi.TinyFaceDetectorOptions({
+      inputSize: 416,
+      scoreThreshold: 0.2,
+    })
+  )
+  .withFaceLandmarks()
+  .withFaceDescriptor();
 
     console.log("RESULT:", detection);
 
-    if (detection) {
-      setFaceDetected(true);
-    } else {
-      setFaceDetected(false);
-    }
+    setFaceDetected(!!detection);
 
   } catch (err) {
     console.log("AI ERROR:", err);
@@ -244,9 +239,9 @@ export default function App() {
 };
 
   // ================= STOP CAMERA =================
-  const stopCamera = () => {
+const stopCamera = () => {
   if (streamRef.current) {
-    streamRef.current.getTracks().forEach((track) => track.stop());
+    streamRef.current.getTracks().forEach(track => track.stop());
   }
 
   if (detectRef.current) {
