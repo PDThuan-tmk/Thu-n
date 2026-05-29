@@ -1,13 +1,12 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { db } from "./firebase";
-
 import {
   collection,
   addDoc,
   deleteDoc,
   doc,
   onSnapshot,
-  updateDoc,
+  updateDoc
 } from "firebase/firestore";
 
 import * as faceapi from "face-api.js";
@@ -25,38 +24,29 @@ function App() {
   const [studentClass, setStudentClass] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [page, setPage] = useState("dashboard");
-  const [modelsLoaded, setModelsLoaded] = useState(false);
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
-  const intervalRef = useRef(null);
-  const faceMatcherRef = useRef(null);
 
   // ================= FIREBASE =================
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "students"), (snapshot) => {
-      setStudents(
-        snapshot.docs.map((docSnap) => ({
-          firebaseId: docSnap.id,
-          ...docSnap.data(),
-        }))
-      );
+      let data = snapshot.docs.map((docSnap) => ({
+        firebaseId: docSnap.id,
+        ...docSnap.data()
+      }));
+
+      // remove duplicates by id (fix lỗi import bị lặp)
+      const uniqueMap = new Map();
+      data.forEach(s => {
+        const key = s.id || s.firebaseId;
+        if (!uniqueMap.has(key)) uniqueMap.set(key, s);
+      });
+
+      setStudents([...uniqueMap.values()]);
     });
 
     return () => unsub();
-  }, []);
-
-  // ================= LOAD MODELS =================
-  useEffect(() => {
-    const load = async () => {
-      await faceapi.nets.tinyFaceDetector.loadFromUri("/models");
-      await faceapi.nets.faceLandmark68Net.loadFromUri("/models");
-      await faceapi.nets.faceRecognitionNet.loadFromUri("/models");
-
-      setModelsLoaded(true);
-    };
-
-    load();
   }, []);
 
   // ================= ADD =================
@@ -66,9 +56,9 @@ function App() {
     await addDoc(collection(db, "students"), {
       id: "HS" + Date.now().toString().slice(-6),
       name,
-      class: studentClass,
+      class: studentClass.trim().toUpperCase(),
       imageUrl,
-      status: "Vắng",
+      status: "Vắng"
     });
 
     setName("");
@@ -81,13 +71,16 @@ function App() {
     await deleteDoc(doc(db, "students", id));
   };
 
+  // ================= TOGGLE STATUS =================
+  const toggleStatus = async (firebaseId, current) => {
+    await updateDoc(doc(db, "students", firebaseId), {
+      status: current === "Có mặt" ? "Vắng" : "Có mặt"
+    });
+  };
+
   // ================= CAMERA =================
   const startCamera = async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user" },
-      audio: false,
-    });
-
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
     streamRef.current = stream;
     videoRef.current.srcObject = stream;
     await videoRef.current.play().catch(() => {});
@@ -95,11 +88,11 @@ function App() {
 
   const stopCamera = () => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current.getTracks().forEach(t => t.stop());
     }
   };
 
-  // ================= IMPORT FILE =================
+  // ================= IMPORT =================
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -111,8 +104,8 @@ function App() {
       let rows = [];
 
       if (file.name.endsWith(".csv")) {
-        rows = Papa.parse(data, { header: true, skipEmptyLines: true }).data;
-      } else if (file.name.endsWith(".xlsx")) {
+        rows = Papa.parse(data, { header: true }).data;
+      } else {
         const wb = XLSX.read(data, { type: "binary" });
         const sheet = wb.Sheets[wb.SheetNames[0]];
         rows = XLSX.utils.sheet_to_json(sheet);
@@ -122,11 +115,11 @@ function App() {
         if (!row.name || !row.class) continue;
 
         await addDoc(collection(db, "students"), {
-          id: "HS" + Date.now().toString().slice(-6),
+          id: "HS" + Date.now().toString().slice(-6) + Math.random(),
           name: row.name,
-          class: row.class,
+          class: row.class.trim().toUpperCase(),
           imageUrl: row.imageUrl || "",
-          status: "Vắng",
+          status: "Vắng"
         });
       }
 
@@ -137,140 +130,134 @@ function App() {
   };
 
   // ================= STATS =================
-  const present = students.filter((s) => s.status === "Có mặt").length;
-  const absent = students.filter((s) => s.status === "Vắng").length;
+  const present = students.filter(s => s.status === "Có mặt").length;
+  const absent = students.filter(s => s.status === "Vắng").length;
 
   const chartData = {
     labels: ["Có mặt", "Vắng"],
-    datasets: [{ data: [present, absent] }],
+    datasets: [{ data: [present, absent] }]
   };
 
-  // ================= UI =================
+  // ================= GROUP + SORT FIXED =================
+  const groupedStudents = useMemo(() => {
+    const sorted = [...students]
+      .sort((a, b) => {
+        if ((a.class || "") !== (b.class || "")) {
+          return (a.class || "").localeCompare(b.class || "");
+        }
+        return (a.name || "").localeCompare(b.name || "", "vi");
+      });
+
+    const groups = {};
+
+    sorted.forEach(s => {
+      const key = (s.class || "Chưa phân lớp").trim().toUpperCase();
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(s);
+    });
+
+    return groups;
+  }, [students]);
+
   return (
-    <div style={{ display: "flex", fontFamily: "Arial" }}>
+    <div className="min-h-screen bg-gradient-to-b from-sky-50 via-white to-emerald-50">
 
-      {/* SIDEBAR */}
-      <div style={{ width: 220, background: "#111", color: "#fff", padding: 20 }}>
-        <h3>SMART SCHOOL AI</h3>
+      {/* HEADER */}
+      <div className="bg-blue-900 text-white p-4 flex justify-between items-center shadow">
+        <div>
+          <h1 className="text-2xl font-bold">🏫 Smart School System</h1>
+          <p className="text-sm opacity-80">Quản lý học sinh chuẩn hóa theo lớp & trạng thái</p>
+        </div>
 
-        <p onClick={() => setPage("dashboard")} style={{ cursor: "pointer" }}>Dashboard</p>
-        <p onClick={() => setPage("students")} style={{ cursor: "pointer" }}>Students</p>
-        <p onClick={() => setPage("camera")} style={{ cursor: "pointer" }}>Camera AI</p>
+        <div className="space-x-2">
+          <button onClick={() => setPage("dashboard")} className="bg-white text-blue-900 px-3 py-1 rounded">Dashboard</button>
+          <button onClick={() => setPage("students")} className="bg-white text-blue-900 px-3 py-1 rounded">Học sinh</button>
+          <button onClick={() => setPage("camera")} className="bg-white text-blue-900 px-3 py-1 rounded">Camera</button>
+        </div>
       </div>
 
-      {/* MAIN */}
-      <div style={{ flex: 1, padding: 20 }}>
+      <div className="p-6">
 
         {/* DASHBOARD */}
         {page === "dashboard" && (
-          <>
-            <h2>Dashboard</h2>
-            <p>Total: {students.length}</p>
-            <p>Present: {present}</p>
-            <p>Absent: {absent}</p>
+          <div>
+            <h2 className="text-xl font-bold mb-4">📊 Tổng quan</h2>
 
-            <div style={{ width: 300 }}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="bg-white p-4 rounded shadow border-l-4 border-blue-600">Tổng: {students.length}</div>
+              <div className="bg-white p-4 rounded shadow border-l-4 border-green-600">Có mặt: {present}</div>
+              <div className="bg-white p-4 rounded shadow border-l-4 border-red-600">Vắng: {absent}</div>
+            </div>
+
+            <div className="bg-white p-4 rounded shadow w-80">
               <Pie data={chartData} />
             </div>
-          </>
+          </div>
         )}
 
         {/* STUDENTS */}
         {page === "students" && (
-          <>
-            <h2>Students Management</h2>
+          <div>
+            <h2 className="text-xl font-bold mb-4">🎓 Danh sách học sinh (đã fix lỗi sắp xếp)</h2>
 
-            {/* ADD STUDENT */}
-            <div style={{ marginBottom: 20 }}>
-              <input
-                placeholder="Name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-              <input
-                placeholder="Class"
-                value={studentClass}
-                onChange={(e) => setStudentClass(e.target.value)}
-              />
-              <input
-                placeholder="Image URL"
-                value={imageUrl}
-                onChange={(e) => setImageUrl(e.target.value)}
-              />
-
-              <button onClick={addStudent}>Add Student</button>
+            <div className="bg-white p-4 rounded shadow grid grid-cols-1 md:grid-cols-4 gap-2 mb-4">
+              <input className="border p-2 rounded" placeholder="Tên" value={name} onChange={e => setName(e.target.value)} />
+              <input className="border p-2 rounded" placeholder="Lớp" value={studentClass} onChange={e => setStudentClass(e.target.value)} />
+              <input className="border p-2 rounded" placeholder="Ảnh" value={imageUrl} onChange={e => setImageUrl(e.target.value)} />
+              <button className="bg-blue-700 text-white rounded" onClick={addStudent}>Thêm</button>
             </div>
 
-            {/* IMPORT BLOCK (RÕ RÀNG + KHÔNG ẨN) */}
-            <div
-              style={{
-                padding: 15,
-                border: "2px dashed #999",
-                borderRadius: 10,
-                marginBottom: 20,
-                background: "#f9fafb",
-              }}
-            >
-              <h3>📂 Import học sinh hàng loạt</h3>
-
-              <input
-                type="file"
-                accept=".csv,.xlsx"
-                onChange={handleFileUpload}
-              />
-
-              <p style={{ fontSize: 12, color: "gray" }}>
-                File phải có cột: name, class, imageUrl
-              </p>
+            <div className="bg-white p-4 rounded shadow mb-4">
+              <input type="file" accept=".csv,.xlsx" onChange={handleFileUpload} />
             </div>
 
-            {/* TABLE */}
-            <table border="1" cellPadding="5">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Class</th>
-                  <th>Status</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
+            <div className="space-y-6">
+              {Object.keys(groupedStudents).sort().map(className => (
+                <div key={className} className="bg-white p-4 rounded shadow">
+                  <h3 className="font-bold text-blue-800 mb-2">📚 Lớp {className}</h3>
 
-              <tbody>
-                {students.map((s) => (
-                  <tr key={s.firebaseId}>
-                    <td>{s.name}</td>
-                    <td>{s.class}</td>
-                    <td>{s.status}</td>
-                    <td>
-                      <button onClick={() => deleteStudent(s.firebaseId)}>
-                        X
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
+                  <table className="w-full">
+                    <thead className="bg-blue-50">
+                      <tr>
+                        <th className="p-2">Tên</th>
+                        <th>Trạng thái</th>
+                        <th>Hành động</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groupedStudents[className].map(s => (
+                        <tr key={s.firebaseId} className="border-t">
+                          <td className="p-2">{s.name}</td>
+                          <td>
+                            <button onClick={() => toggleStatus(s.firebaseId, s.status)} className={s.status === "Có mặt" ? "text-green-600" : "text-red-600"}>
+                              {s.status}
+                            </button>
+                          </td>
+                          <td>
+                            <button className="text-red-600" onClick={() => deleteStudent(s.firebaseId)}>Xóa</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
 
         {/* CAMERA */}
         {page === "camera" && (
-          <>
-            <h2>Camera AI</h2>
+          <div>
+            <h2 className="text-xl font-bold mb-4">📷 AI Camera</h2>
 
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              style={{ width: 320, borderRadius: 10, background: "#000" }}
-            />
+            <video ref={videoRef} autoPlay playsInline className="w-80 rounded border-4 border-blue-300" />
 
-            <div style={{ marginTop: 10 }}>
-              <button onClick={startCamera}>Start</button>
-              <button onClick={stopCamera}>Stop</button>
+            <div className="mt-4 space-x-2">
+              <button className="bg-green-600 text-white px-4 py-2 rounded" onClick={startCamera}>Start</button>
+              <button className="bg-red-600 text-white px-4 py-2 rounded" onClick={stopCamera}>Stop</button>
             </div>
-          </>
+          </div>
         )}
 
       </div>
