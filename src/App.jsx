@@ -34,9 +34,14 @@ function App() {
 
   const videoRef = useRef(null);
   useEffect(() => {
-  if (videoRef.current) {
-    videoRef.current.style.transform = "scaleX(-1)";
-  }
+  const video = videoRef.current;
+  if (!video) return;
+
+  requestAnimationFrame(() => {
+    if (video) {
+      video.style.transform = "scaleX(-1)";
+    }
+  });
 }, [page]);
   const intervalRef = useRef(null);
   const streamRef = useRef(null);
