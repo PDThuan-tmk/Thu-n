@@ -33,6 +33,11 @@ function App() {
   const [modelsLoaded, setModelsLoaded] = useState(false);
 
   const videoRef = useRef(null);
+  useEffect(() => {
+  if (videoRef.current) {
+    videoRef.current.style.transform = "scaleX(-1)";
+  }
+}, [page]);
   const intervalRef = useRef(null);
   const streamRef = useRef(null);
 
@@ -98,8 +103,12 @@ function App() {
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" },
-      });
+video: {
+  facingMode: "user",
+  width: { ideal: 640 },
+  height: { ideal: 480 }
+},
+audio: false      });
 
       streamRef.current = stream;
 
@@ -140,11 +149,9 @@ function App() {
 
         // 👉 demo: random học sinh
         if (detections.length > 0 && students.length > 0) {
-          const random = students[Math.floor(Math.random() * students.length)];
-
-          await updateDoc(doc(db, "students", random.firebaseId), {
-            status: "Có mặt",
-          });
+          if (detections.length > 0) {
+  console.log("Có khuôn mặt:", detections.length);
+}
         }
       } catch (err) {
         console.log("AI error:", err);
