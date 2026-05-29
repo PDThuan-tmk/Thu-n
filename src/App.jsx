@@ -179,26 +179,37 @@ export default function App() {
 
   // ================= FACE DETECTION =================
     const detectFace = async () => {
-  if (!videoRef.current || !modelsLoaded) return;
+  console.log("DETECT RUNNING");
+
+  if (!videoRef.current) {
+    console.log("NO VIDEO");
+    return;
+  }
+
+  if (!modelsLoaded) {
+    console.log("MODELS NOT LOADED");
+    return;
+  }
 
   try {
     const detection = await faceapi.detectSingleFace(
       videoRef.current,
       new faceapi.TinyFaceDetectorOptions({
         inputSize: 416,
-        scoreThreshold: 0.3,
+        scoreThreshold: 0.2,
       })
     );
 
-    console.log("FACE:", detection);
+    console.log("RESULT:", detection);
 
     if (detection) {
       setFaceDetected(true);
     } else {
       setFaceDetected(false);
     }
+
   } catch (err) {
-    console.log(err);
+    console.log("AI ERROR:", err);
   }
 };
 
