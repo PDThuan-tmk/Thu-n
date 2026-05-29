@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { db } from "./firebase";
 
 import {
@@ -14,12 +14,18 @@ import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import * as faceapi from "face-api.js";
 
+import {
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend,
+} from "chart.js";
+
 import { Pie } from "react-chartjs-2";
-import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
-function App() {
+export default function App() {
   // ================= STATE =================
   const [students, setStudents] = useState([]);
 
@@ -33,26 +39,30 @@ function App() {
   const [selectedClass, setSelectedClass] = useState(null);
 
   const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [faceDetected, setFaceDetected] = useState(false);
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
-  const intervalRef = useRef(null);
+  const detectRef = useRef(null);
 
   // ================= FIREBASE =================
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "students"), (snapshot) => {
-      const data = snapshot.docs.map((docSnap) => ({
-        firebaseId: docSnap.id,
-        ...docSnap.data(),
-      }));
+    const unsub = onSnapshot(
+      collection(db, "students"),
+      (snapshot) => {
+        const data = snapshot.docs.map((docSnap) => ({
+          firebaseId: docSnap.id,
+          ...docSnap.data(),
+        }));
 
-      setStudents(data);
-    });
+        setStudents(data);
+      }
+    );
 
     return () => unsub();
   }, []);
 
-  // ================= LOAD AI MODELS =================
+  // ================= LOAD AI =================
   useEffect(() => {
     const loadModels = async () => {
       try {
@@ -64,7 +74,7 @@ function App() {
 
         setModelsLoaded(true);
 
-        console.log("✅ AI Models Loaded");
+        console.log("AI Ready");
       } catch (err) {
         console.log(err);
       }
@@ -75,13 +85,20 @@ function App() {
 
   // ================= ADD STUDENT =================
   const addStudent = async () => {
-    if (!name || !studentClass) return;
+    if (!name || !studentClass) {
+      alert("Vui lòng nhập đủ thông tin");
+      return;
+    }
 
     await addDoc(collection(db, "students"), {
       id: "HS" + Date.now().toString().slice(-6),
-      name,
+
+      name: name.trim(),
+
       class: studentClass.trim().toUpperCase(),
-      imageUrl,
+
+      imageUrl: imageUrl || "",
+
       status: "Vắng",
     });
 
@@ -96,9 +113,9 @@ function App() {
   };
 
   // ================= TOGGLE STATUS =================
-  const toggleStatus = async (id, current) => {
+  const toggleStatus = async (id, currentStatus) => {
     await updateDoc(doc(db, "students", id), {
-      status: current === "Có mặt" ? "Vắng" : "Có mặt",
+      status: currentStatus === "Có mặt" ? "Vắng" : "Có mặt",
     });
   };
 
@@ -115,15 +132,22 @@ function App() {
 
       let rows = [];
 
+      // CSV
       if (file.name.endsWith(".csv")) {
         rows = Papa.parse(data, {
           header: true,
           skipEmptyLines: true,
         }).data;
-      } else if (file.name.endsWith(".xlsx")) {
-        const wb = XLSX.read(data, { type: "binary" });
+      }
 
-        const sheet = wb.Sheets[wb.SheetNames[0]];
+      // XLSX
+      else if (file.name.endsWith(".xlsx")) {
+        const workbook = XLSX.read(data, {
+          type: "binary",
+        });
+
+        const sheet =
+          workbook.Sheets[workbook.SheetNames[0]];
 
         rows = XLSX.utils.sheet_to_json(sheet);
       }
@@ -147,13 +171,13 @@ function App() {
         });
       }
 
-      alert("✅ Import thành công!");
+      alert("Import thành công");
     };
 
     reader.readAsBinaryString(file);
   };
 
-  // ================= CAMERA =================
+  // ================= FACE DETECTION =================
   const detectFace = async () => {
     if (!videoRef.current || !modelsLoaded) return;
 
@@ -162,19 +186,17 @@ function App() {
       new faceapi.TinyFaceDetectorOptions()
     );
 
-    console.log("Faces:", detections.length);
-
-    if (detections.length > 0) {
-      console.log("✅ Đã phát hiện khuôn mặt");
-    }
+    setFaceDetected(detections.length > 0);
   };
 
+  // ================= START CAMERA =================
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: false,
-      });
+      const stream =
+        await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
 
       streamRef.current = stream;
 
@@ -182,23 +204,27 @@ function App() {
 
       await videoRef.current.play();
 
-      intervalRef.current = setInterval(() => {
+      detectRef.current = setInterval(() => {
         detectFace();
-      }, 2000);
-
+      }, 1500);
     } catch (err) {
       console.log(err);
     }
   };
 
+  // ================= STOP CAMERA =================
   const stopCamera = () => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current
+        .getTracks()
+        .forEach((track) => track.stop());
     }
 
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
+    if (detectRef.current) {
+      clearInterval(detectRef.current);
     }
+
+    setFaceDetected(false);
   };
 
   // ================= STATS =================
@@ -212,6 +238,7 @@ function App() {
 
   const chartData = {
     labels: ["Có mặt", "Vắng"],
+
     datasets: [
       {
         data: [present, absent],
@@ -219,68 +246,76 @@ function App() {
     ],
   };
 
-  // ================= GROUP DATA =================
-  const structured = useMemo(() => {
-    const res = {};
+  // ================= GROUP =================
+  const groupedStudents = useMemo(() => {
+    const result = {};
 
-    students.forEach((s) => {
-      const cls = (s.class || "").toUpperCase();
+    students.forEach((student) => {
+      const cls = (student.class || "").toUpperCase();
 
-      const block = cls.match(/\d+/)?.[0] || "KHÁC";
+      const block =
+        cls.match(/\d+/)?.[0] || "KHÁC";
 
-      if (!res[block]) res[block] = {};
-
-      if (!res[block][cls]) {
-        res[block][cls] = [];
+      if (!result[block]) {
+        result[block] = {};
       }
 
-      res[block][cls].push(s);
+      if (!result[block][cls]) {
+        result[block][cls] = [];
+      }
+
+      result[block][cls].push(student);
     });
 
-    Object.keys(res).forEach((block) => {
-      Object.keys(res[block]).forEach((cls) => {
-        res[block][cls].sort((a, b) =>
-          (a.name || "").localeCompare(
-            b.name || "",
-            "vi"
-          )
+    Object.keys(result).forEach((block) => {
+      Object.keys(result[block]).forEach((cls) => {
+        result[block][cls].sort((a, b) =>
+          a.name.localeCompare(b.name, "vi")
         );
       });
     });
 
-    return res;
+    return result;
   }, [students]);
 
   // ================= UI =================
   return (
-    <div className="min-h-screen flex bg-gray-100">
+    <div className="min-h-screen flex bg-slate-100">
 
       {/* SIDEBAR */}
       <div className="w-64 bg-blue-900 text-white p-5">
 
-        <h1 className="text-2xl font-bold mb-6">
+        <h1 className="text-3xl font-bold mb-8">
           🏫 SMART SCHOOL AI
         </h1>
 
-        <div className="space-y-3">
+        <div className="space-y-4">
 
           <button
-            onClick={() => setPage("dashboard")}
-            className="w-full bg-blue-800 p-3 rounded"
+            onClick={() => {
+              setPage("dashboard");
+              setSelectedBlock(null);
+              setSelectedClass(null);
+            }}
+            className="w-full bg-blue-800 p-3 rounded-lg hover:bg-blue-700"
           >
             📊 Dashboard
           </button>
 
           <button
-            onClick={() => setPage("students")}
-            className="w-full bg-blue-800 p-3 rounded"
+            onClick={() => {
+              setPage("students");
+            }}
+            className="w-full bg-blue-800 p-3 rounded-lg hover:bg-blue-700"
           >
-            🎓 Students
+            🎓 Học sinh
           </button>
 
           <button
-            onClick={() => setPage("camera")}
-            className="w-full bg-blue-800 p-3 rounded"
+            onClick={() => {
+              setPage("camera");
+            }}
+            className="w-full bg-blue-800 p-3 rounded-lg hover:bg-blue-700"
           >
             📷 Camera AI
           </button>
@@ -295,27 +330,39 @@ function App() {
         {page === "dashboard" && (
           <div>
 
-            <h2 className="text-2xl font-bold mb-5">
+            <h2 className="text-3xl font-bold mb-6">
               📊 Dashboard
             </h2>
 
-            <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-3 gap-5 mb-6">
 
-              <div className="bg-white p-5 rounded shadow">
-                Tổng học sinh: {students.length}
+              <div className="bg-white p-6 rounded-xl shadow">
+                <p>Tổng học sinh</p>
+
+                <h3 className="text-3xl font-bold">
+                  {students.length}
+                </h3>
               </div>
 
-              <div className="bg-white p-5 rounded shadow">
-                Có mặt: {present}
+              <div className="bg-white p-6 rounded-xl shadow">
+                <p>Có mặt</p>
+
+                <h3 className="text-3xl font-bold text-green-600">
+                  {present}
+                </h3>
               </div>
 
-              <div className="bg-white p-5 rounded shadow">
-                Vắng: {absent}
+              <div className="bg-white p-6 rounded-xl shadow">
+                <p>Vắng</p>
+
+                <h3 className="text-3xl font-bold text-red-600">
+                  {absent}
+                </h3>
               </div>
 
             </div>
 
-            <div className="bg-white p-5 rounded shadow w-80">
+            <div className="bg-white p-6 rounded-xl shadow w-96">
               <Pie data={chartData} />
             </div>
 
@@ -326,73 +373,83 @@ function App() {
         {page === "students" && (
           <div>
 
-            <h2 className="text-2xl font-bold mb-5">
+            <h2 className="text-3xl font-bold mb-6">
               🎓 Quản lý học sinh
             </h2>
 
-            {/* ADD */}
-            <div className="bg-white p-5 rounded shadow mb-5 grid grid-cols-3 gap-3">
+            {/* FORM */}
+            <div className="bg-white p-5 rounded-xl shadow mb-6">
 
-              <input
-                className="border p-3 rounded"
-                placeholder="Tên học sinh"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
+              <div className="grid grid-cols-3 gap-4">
 
-              <input
-                className="border p-3 rounded"
-                placeholder="Lớp"
-                value={studentClass}
-                onChange={(e) =>
-                  setStudentClass(e.target.value)
-                }
-              />
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Tên học sinh"
+                  className="border p-3 rounded-lg"
+                />
 
-              <input
-                className="border p-3 rounded"
-                placeholder="Image URL"
-                value={imageUrl}
-                onChange={(e) =>
-                  setImageUrl(e.target.value)
-                }
-              />
+                <input
+                  value={studentClass}
+                  onChange={(e) =>
+                    setStudentClass(e.target.value)
+                  }
+                  placeholder="Lớp"
+                  className="border p-3 rounded-lg"
+                />
+
+                <input
+                  value={imageUrl}
+                  onChange={(e) =>
+                    setImageUrl(e.target.value)
+                  }
+                  placeholder="Image URL"
+                  className="border p-3 rounded-lg"
+                />
+
+              </div>
 
               <button
                 onClick={addStudent}
-                className="bg-blue-600 text-white p-3 rounded col-span-3"
+                className="mt-4 bg-blue-600 text-white px-6 py-3 rounded-lg"
               >
                 ➕ Thêm học sinh
               </button>
 
-              <input
-                type="file"
-                onChange={handleFileUpload}
-                className="col-span-3"
-              />
+              <div className="mt-5 border-2 border-dashed p-4 rounded-lg">
+
+                <p className="font-bold mb-2">
+                  📂 Import CSV/XLSX
+                </p>
+
+                <input
+                  type="file"
+                  accept=".csv,.xlsx"
+                  onChange={handleFileUpload}
+                />
+
+              </div>
 
             </div>
 
             {/* BLOCK */}
             {!selectedBlock && (
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-3 gap-5">
 
-                {Object.keys(structured)
+                {Object.keys(groupedStudents)
                   .sort()
                   .map((block) => (
-
                     <div
                       key={block}
                       onClick={() =>
                         setSelectedBlock(block)
                       }
-                      className="bg-blue-100 p-6 rounded shadow cursor-pointer text-center hover:bg-blue-200"
+                      className="bg-blue-100 hover:bg-blue-200 rounded-xl shadow p-8 text-center cursor-pointer"
                     >
-                      <h3 className="text-xl font-bold">
+                      <h3 className="text-2xl font-bold">
                         Khối {block}
                       </h3>
                     </div>
-
                   ))}
 
               </div>
@@ -403,28 +460,32 @@ function App() {
               <div>
 
                 <button
-                  onClick={() => setSelectedBlock(null)}
-                  className="mb-4 text-blue-600"
+                  onClick={() =>
+                    setSelectedBlock(null)
+                  }
+                  className="mb-5 text-blue-600"
                 >
                   ← Quay lại
                 </button>
 
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-3 gap-5">
 
-                  {Object.keys(structured[selectedBlock])
+                  {Object.keys(
+                    groupedStudents[selectedBlock]
+                  )
                     .sort()
                     .map((cls) => (
-
                       <div
                         key={cls}
                         onClick={() =>
                           setSelectedClass(cls)
                         }
-                        className="bg-green-100 p-5 rounded shadow cursor-pointer text-center hover:bg-green-200"
+                        className="bg-green-100 hover:bg-green-200 rounded-xl shadow p-6 text-center cursor-pointer"
                       >
-                        {cls}
+                        <h3 className="text-xl font-bold">
+                          {cls}
+                        </h3>
                       </div>
-
                     ))}
 
                 </div>
@@ -432,78 +493,105 @@ function App() {
               </div>
             )}
 
-            {/* STUDENTS LIST */}
+            {/* TABLE */}
             {selectedClass && (
               <div>
 
                 <button
-                  onClick={() => setSelectedClass(null)}
-                  className="mb-4 text-blue-600"
+                  onClick={() =>
+                    setSelectedClass(null)
+                  }
+                  className="mb-5 text-blue-600"
                 >
                   ← Quay lại lớp
                 </button>
 
-                <table className="w-full bg-white shadow rounded">
+                <div className="bg-white rounded-xl shadow overflow-hidden">
 
-                  <thead className="bg-blue-900 text-white">
+                  <table className="w-full">
 
-                    <tr>
-                      <th className="p-3">Tên</th>
-                      <th>Lớp</th>
-                      <th>Trạng thái</th>
-                      <th>Xóa</th>
-                    </tr>
+                    <thead className="bg-blue-900 text-white">
 
-                  </thead>
+                      <tr>
+                        <th className="p-4 text-left">
+                          Tên
+                        </th>
 
-                  <tbody>
+                        <th>Lớp</th>
 
-                    {structured[selectedBlock][selectedClass]
-                      .map((s) => (
+                        <th>Trạng thái</th>
 
-                        <tr
-                          key={s.firebaseId}
-                          className="border-b"
-                        >
+                        <th>Xóa</th>
+                      </tr>
 
-                          <td className="p-3">
-                            {s.name}
-                          </td>
+                    </thead>
 
-                          <td>{s.class}</td>
+                    <tbody>
 
-                          <td
-                            className="cursor-pointer"
-                            onClick={() =>
-                              toggleStatus(
-                                s.firebaseId,
-                                s.status
-                              )
+                      {groupedStudents[
+                        selectedBlock
+                      ][selectedClass].map(
+                        (student) => (
+                          <tr
+                            key={
+                              student.firebaseId
                             }
+                            className="border-b"
                           >
-                            {s.status}
-                          </td>
 
-                          <td>
-                            <button
-                              onClick={() =>
-                                deleteStudent(
-                                  s.firebaseId
-                                )
-                              }
-                              className="text-red-600"
-                            >
-                              X
-                            </button>
-                          </td>
+                            <td className="p-4">
+                              {student.name}
+                            </td>
 
-                        </tr>
+                            <td>
+                              {student.class}
+                            </td>
 
-                      ))}
+                            <td>
 
-                  </tbody>
+                              <button
+                                onClick={() =>
+                                  toggleStatus(
+                                    student.firebaseId,
+                                    student.status
+                                  )
+                                }
+                                className={
+                                  student.status ===
+                                  "Có mặt"
+                                    ? "bg-green-500 text-white px-4 py-2 rounded"
+                                    : "bg-red-500 text-white px-4 py-2 rounded"
+                                }
+                              >
+                                {student.status}
+                              </button>
 
-                </table>
+                            </td>
+
+                            <td>
+
+                              <button
+                                onClick={() =>
+                                  deleteStudent(
+                                    student.firebaseId
+                                  )
+                                }
+                                className="bg-red-600 text-white px-3 py-2 rounded"
+                              >
+                                X
+                              </button>
+
+                            </td>
+
+                          </tr>
+                        )
+                      )}
+
+                    </tbody>
+
+                  </table>
+
+                </div>
 
               </div>
             )}
@@ -515,43 +603,55 @@ function App() {
         {page === "camera" && (
           <div>
 
-            <h2 className="text-2xl font-bold mb-5">
+            <h2 className="text-3xl font-bold mb-6">
               📷 Camera AI
             </h2>
 
-            <div className="bg-white p-5 rounded shadow w-fit">
+            <div className="bg-white p-6 rounded-xl shadow w-fit">
 
               <video
                 ref={videoRef}
                 autoPlay
-                playsInline
                 muted
-                className="w-[500px] rounded bg-black"
+                playsInline
+                className="w-[600px] rounded-xl bg-black"
               />
 
-              <div className="mt-4 flex gap-3">
+              <div className="flex gap-4 mt-5">
 
                 <button
                   onClick={startCamera}
-                  className="bg-green-600 text-white px-5 py-2 rounded"
+                  className="bg-green-600 text-white px-5 py-3 rounded-lg"
                 >
                   ▶ Start Camera
                 </button>
 
                 <button
                   onClick={stopCamera}
-                  className="bg-red-600 text-white px-5 py-2 rounded"
+                  className="bg-red-600 text-white px-5 py-3 rounded-lg"
                 >
                   ⏹ Stop Camera
                 </button>
 
               </div>
 
-              <p className="mt-3 text-gray-600">
-                {modelsLoaded
-                  ? "✅ AI đã sẵn sàng"
-                  : "⏳ Đang tải AI models..."}
-              </p>
+              <div className="mt-5">
+
+                <p>
+                  {modelsLoaded
+                    ? "✅ AI Models Ready"
+                    : "⏳ Loading AI Models..."}
+                </p>
+
+                <p className="mt-2 text-xl font-bold">
+
+                  {faceDetected
+                    ? "🟢 Đã phát hiện khuôn mặt"
+                    : "🔴 Chưa phát hiện khuôn mặt"}
+
+                </p>
+
+              </div>
 
             </div>
 
@@ -559,9 +659,7 @@ function App() {
         )}
 
       </div>
+
     </div>
   );
 }
-
-export default App;
-```
