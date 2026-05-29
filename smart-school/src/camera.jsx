@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as faceapi from "face-api.js";
-import { collection, addDoc } from "firebase/firestore";
+import { collection, getDocs, addDoc } from "firebase/firestore";
 import { db } from "./firebase";
 
 export default function Camera() {
@@ -8,7 +8,7 @@ export default function Camera() {
   const [status, setStatus] = useState("Đang khởi động...");
   const [faceMatcher, setFaceMatcher] = useState(null);
 
-  // chống ghi điểm danh trùng
+  // chống trùng điểm danh
   const marked = new Set();
 
   // ======================
@@ -23,7 +23,7 @@ export default function Camera() {
       await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
 
       console.log("AI MODELS LOADED");
-      setStatus("AI sẵn sàng");
+      setStatus("AI READY");
     };
 
     loadModels();
@@ -39,19 +39,57 @@ export default function Camera() {
       })
       .catch(err => {
         console.log("Camera error:", err);
-        setStatus("Lỗi camera");
+        setStatus("Camera lỗi");
       });
   }, []);
 
   // ======================
-  // LOAD HỌC SINH (nếu bạn đã có faceMatcher ở bước trước)
+  // TRAIN FACE MATCHER TỪ FIREBASE
   // ======================
   useEffect(() => {
-    // phần này bạn đã có từ trước (giữ nguyên nếu đã chạy)
+    const loadStudents = async () => {
+      const snapshot = await getDocs(collection(db, "students"));
+
+      const labeledDescriptors = [];
+
+      for (const docSnap of snapshot.docs) {
+        const data = docSnap.data();
+
+        try {
+          const img = await faceapi.fetchImage(data.image);
+
+          const detection = await faceapi
+            .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+
+          if (!detection) continue;
+
+          labeledDescriptors.push(
+            new faceapi.LabeledFaceDescriptors(data.name, [
+              detection.descriptor
+            ])
+          );
+
+          console.log("TRAINED:", data.name);
+
+        } catch (err) {
+          console.log("ERROR TRAIN:", data.name);
+        }
+      }
+
+      const matcher = new faceapi.FaceMatcher(labeledDescriptors, 0.6);
+
+      console.log("FACE MATCHER READY:", labeledDescriptors.length);
+
+      setFaceMatcher(matcher);
+    };
+
+    loadStudents();
   }, []);
 
   // ======================
-  // HÀM ĐIỂM DANH
+  // HÀM ĐIỂM DANH FIREBASE
   // ======================
   const markAttendance = async (name) => {
     try {
@@ -74,6 +112,8 @@ export default function Camera() {
     setInterval(async () => {
       if (!videoRef.current || !faceMatcher) return;
 
+      setStatus("DETECT RUNNING");
+
       const detections = await faceapi
         .detectAllFaces(videoRef.current, new faceapi.TinyFaceDetectorOptions())
         .withFaceLandmarks()
@@ -86,9 +126,10 @@ export default function Camera() {
 
       detections.forEach(d => {
         const result = faceMatcher.findBestMatch(d.descriptor);
-        const name = result.label;
 
-        console.log("👤", result.toString());
+        console.log("RESULT:", result.toString());
+
+        const name = result.label;
 
         setStatus(result.toString());
 
@@ -97,6 +138,7 @@ export default function Camera() {
         // ======================
         if (name !== "unknown" && !marked.has(name)) {
           marked.add(name);
+
           markAttendance(name);
         }
       });
