@@ -1,4 +1,3 @@
-```jsx
 import { useState, useEffect, useRef, useMemo } from "react";
 import { db } from "./firebase";
 
