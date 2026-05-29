@@ -3,6 +3,3 @@ dist
 build
 .env
 .vercel
-
-# QUAN TRỌNG
-public/models/

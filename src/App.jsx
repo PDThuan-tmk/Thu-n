@@ -178,39 +178,53 @@ export default function App() {
   };
 
   // ================= FACE DETECTION =================
-  const detectFace = async () => {
-    if (!videoRef.current || !modelsLoaded) return;
+    const detectFace = async () => {
+  if (!videoRef.current || !modelsLoaded) return;
 
-    const detections = await faceapi.detectAllFaces(
+  try {
+    const detection = await faceapi.detectSingleFace(
       videoRef.current,
-      new faceapi.TinyFaceDetectorOptions()
+      new faceapi.TinyFaceDetectorOptions({
+        inputSize: 416,
+        scoreThreshold: 0.3,
+      })
     );
 
-    setFaceDetected(detections.length > 0);
-  };
+    console.log("FACE:", detection);
+
+    if (detection) {
+      setFaceDetected(true);
+    } else {
+      setFaceDetected(false);
+    }
+  } catch (err) {
+    console.log(err);
+  }
+};
 
   // ================= START CAMERA =================
   const startCamera = async () => {
-    try {
-      const stream =
-        await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: false,
-        });
+  try {
+    const stream =
+      await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
+      });
 
-      streamRef.current = stream;
+    streamRef.current = stream;
 
-      videoRef.current.srcObject = stream;
+    videoRef.current.srcObject = stream;
 
-      await videoRef.current.play();
+    await videoRef.current.play();
 
-      detectRef.current = setInterval(() => {
-        detectFace();
-      }, 1500);
-    } catch (err) {
-      console.log(err);
-    }
-  };
+    detectInterval.current = setInterval(async () => {
+      await detectFace();
+    }, 800);
+
+  } catch (err) {
+    console.log(err);
+  }
+};
 
   // ================= STOP CAMERA =================
   const stopCamera = () => {
