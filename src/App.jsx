@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { db } from "./firebase";
+import SchoolMap from "./components/SchoolMap";
 
 import {
   collection,
@@ -8,6 +9,7 @@ import {
   doc,
   onSnapshot,
   updateDoc,
+  getDocs,
 } from "firebase/firestore";
 
 import Papa from "papaparse";
@@ -40,28 +42,111 @@ export default function App() {
 
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [faceDetected, setFaceDetected] = useState(false);
+  const [faceMatcher, setFaceMatcher] = useState(null);
+  const [studentName, setStudentName] = useState("");
 
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const detectRef = useRef(null);
+  const markedStudents = useRef(new Set());
 
   // ================= FIREBASE =================
   useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, "students"),
-      (snapshot) => {
-        const data = snapshot.docs.map((docSnap) => ({
-          firebaseId: docSnap.id,
-          ...docSnap.data(),
-        }));
+  const unsub = onSnapshot(
+    collection(db, "students"),
+    (snapshot) => {
 
-        setStudents(data);
+      console.log(
+        "FIREBASE DOCS:",
+        snapshot.docs.length
+      );
+
+      snapshot.docs.forEach((docSnap) => {
+        console.log(
+          "DOC:",
+          docSnap.id,
+          docSnap.data()
+        );
+      });
+
+      const data = snapshot.docs.map((docSnap) => ({
+        firebaseId: docSnap.id,
+        ...docSnap.data(),
+      }));
+
+      setStudents(data);
+    }
+  );
+
+  return () => unsub();
+}, []);
+
+  const loadFaceData = async () => {
+  const snapshot = await getDocs(
+    collection(db, "students")
+  );
+
+  const labeledDescriptors = [];
+
+  for (const docSnap of snapshot.docs) {
+    const data = docSnap.data();
+
+    try {
+      if (!data.imageUrl) {
+        console.log("NO IMAGE:", data.name);
+        continue;
       }
-    );
 
-    return () => unsub();
-  }, []);
+      console.log("TRAINING:", data.name);
 
+      const img = await faceapi.fetchImage(
+        data.imageUrl
+      );
+
+      console.log("IMAGE OK:", data.name);
+
+      const detection = await faceapi
+        .detectSingleFace(
+          img,
+          new faceapi.TinyFaceDetectorOptions({
+            inputSize: 416,
+            scoreThreshold: 0.2,
+          })
+        )
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+
+      if (!detection) {
+        console.log(
+          "NO FACE FOUND:",
+          data.name
+        );
+        continue;
+      }
+
+      labeledDescriptors.push(
+        new faceapi.LabeledFaceDescriptors(
+          data.name,
+          [detection.descriptor]
+        )
+      );
+
+      console.log(
+        "TRAINED:",
+        data.name
+      );
+
+    } catch (err) {
+      console.log(
+        "ERROR:",
+        data.name,
+        err
+      );
+    }
+  }
+
+  return labeledDescriptors;
+};
   // ================= LOAD AI =================
   useEffect(() => {
   const loadModels = async () => {
@@ -79,6 +164,19 @@ export default function App() {
 
     setModelsLoaded(true);
     console.log("AI READY TRUE");
+    const labeled = await loadFaceData();
+
+console.log("TRAINED STUDENTS:", labeled.length);
+
+const matcher = new faceapi.FaceMatcher(
+  labeled,
+  0.6
+);
+
+setFaceMatcher(matcher);
+
+console.log("FACE MATCHER READY");
+    
 
   } catch (err) {
     console.log("MODEL LOAD ERROR:", err);
@@ -184,30 +282,80 @@ export default function App() {
 
   // ================= FACE DETECTION =================
 const detectFace = async () => {
-  if (!modelsLoaded) return;
+  if (!modelsLoaded || !faceMatcher) return;
 
-  // 🔥 CHECK VIDEO Ở ĐÂY
   if (!videoRef.current || videoRef.current.readyState !== 4) {
     return;
   }
 
-  console.log("DETECT RUNNING");
-
   try {
     const detection = await faceapi
-  .detectSingleFace(
-    videoRef.current,
-    new faceapi.TinyFaceDetectorOptions({
-      inputSize: 416,
-      scoreThreshold: 0.2,
-    })
-  )
-  .withFaceLandmarks()
-  .withFaceDescriptor();
+      .detectSingleFace(
+        videoRef.current,
+        new faceapi.TinyFaceDetectorOptions({
+          inputSize: 416,
+          scoreThreshold: 0.2,
+        })
+      )
+      .withFaceLandmarks()
+      .withFaceDescriptor();
 
-    console.log("RESULT:", detection);
+    if (!detection) {
+      setFaceDetected(false);
+      setStudentName("");
+      return;
+    }
 
-    setFaceDetected(!!detection);
+    setFaceDetected(true);
+
+    const result = faceMatcher.findBestMatch(
+      detection.descriptor
+    );
+
+    console.log("MATCH:", result.toString());
+
+    if (result.label !== "unknown") {
+
+  setStudentName(result.label);
+
+  if (!markedStudents.current.has(result.label)) {
+
+    markedStudents.current.add(result.label);
+
+    console.log("✅ NHẬN DIỆN:", result.label);
+
+    const snapshot = await getDocs(
+      collection(db, "students")
+    );
+
+    for (const docSnap of snapshot.docs) {
+
+      const data = docSnap.data();
+
+      if (data.name === result.label) {
+
+        await updateDoc(
+          doc(db, "students", docSnap.id),
+          {
+            status: "Có mặt"
+          }
+        );
+
+        console.log(
+          "✅ Đã cập nhật trạng thái:",
+          result.label
+        );
+
+        break;
+      }
+    }
+  }
+
+} else {
+
+  setStudentName("Không xác định");
+
+}
 
   } catch (err) {
     console.log("AI ERROR:", err);
@@ -254,22 +402,66 @@ const stopCamera = () => {
 
   // ================= STATS =================
   const present = students.filter(
-    (s) => s.status === "Có mặt"
-  ).length;
+  (s) => s.status === "Có mặt"
+).length;
 
-  const absent = students.filter(
-    (s) => s.status === "Vắng"
-  ).length;
+const absent = students.filter(
+  (s) => s.status === "Vắng"
+).length;
 
-  const chartData = {
-    labels: ["Có mặt", "Vắng"],
+const chartData = {
+  labels: ["Có mặt", "Vắng"],
+  datasets: [
+    {
+      data: [present, absent],
+      backgroundColor: ["#22c55e", "#ef4444"],
+    },
+  ],
+};
+  const classStats = useMemo(() => {
+  const result = {};
 
-    datasets: [
-      {
-        data: [present, absent],
-      },
-    ],
-  };
+  students.forEach((s) => {
+    const cls = s.class || "KHÁC";
+
+    if (!result[cls]) {
+      result[cls] = {
+        total: 0,
+        present: 0,
+        absent: 0,
+      };
+    }
+
+    result[cls].total += 1;
+
+    if (s.status === "Có mặt") {
+      result[cls].present += 1;
+    } else {
+      result[cls].absent += 1;
+    }
+  });
+
+  return result;
+}, [students]);
+const classRanking = useMemo(() => {
+  return Object.entries(classStats).map(([cls, data]) => {
+
+    const rate =
+      data.total === 0
+        ? 0
+        : (data.present / data.total) * 100;
+
+    return {
+      className: cls,
+      total: data.total,
+      present: data.present,
+      absent: data.absent,
+      rate: Number(rate.toFixed(1)),
+    };
+  }).sort((a, b) => b.rate - a.rate);
+
+}, [classStats]);
+
 
   // ================= GROUP =================
   const groupedStudents = useMemo(() => {
@@ -305,90 +497,241 @@ const stopCamera = () => {
 
   // ================= UI =================
   return (
-    <div className="min-h-screen flex bg-slate-100">
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 to-blue-50 flex pt-16">
+    {/* TOP HEADER */}
+<div className="fixed top-0 left-0 right-0 h-16 bg-gradient-to-r from-blue-900 to-blue-700 text-white flex items-center justify-between px-6 shadow-lg z-50">
+
+  <div className="flex items-center gap-3">
+    <div className="text-2xl">🏫</div>
+
+    <div>
+      <div className="font-bold text-sm">
+        THPT SỐ 1 TƯ NGHĨA
+      </div>
+      <div className="text-xs opacity-80">
+        Smart School AI Management System
+      </div>
+    </div>
+  </div>
+
+  <div className="text-sm">
+    📅 {new Date().toLocaleDateString("vi-VN")}
+  </div>
+
+</div>
+    <div className="bg-gradient-to-r from-blue-900 to-blue-700 text-white p-4 text-center font-bold text-lg shadow-md tracking-wide">
+      🎓 TRƯỜNG THPT SỐ 1 TƯ NGHĨA - HỆ THỐNG SMART SCHOOL AI
+    </div>
 
       {/* SIDEBAR */}
-      <div className="w-64 bg-blue-900 text-white p-5">
+      <div className="w-64 min-h-screen bg-gradient-to-b from-blue-950 to-blue-800 text-white p-5 shadow-2xl">
 
-        <h1 className="text-3xl font-bold mb-8">
-          🏫 SMART SCHOOL AI
-        </h1>
+  {/* LOGO TRƯỜNG */}
+  <div className="text-center mb-10">
+    <div className="text-4xl mb-2">🎓</div>
 
-        <div className="space-y-4">
+    <h1 className="text-lg font-bold">
+      THPT SỐ 1
+      <br />
+      <span className="text-yellow-300">TƯ NGHĨA</span>
+    </h1>
 
-          <button
-            onClick={() => {
-              setPage("dashboard");
-              setSelectedBlock(null);
-              setSelectedClass(null);
-            }}
-            className="w-full bg-blue-800 p-3 rounded-lg hover:bg-blue-700"
-          >
-            📊 Dashboard
-          </button>
+    <p className="text-xs text-blue-200 mt-2">
+      Smart School AI System
+    </p>
+  </div>
 
-          <button
-            onClick={() => {
-              setPage("students");
-            }}
-            className="w-full bg-blue-800 p-3 rounded-lg hover:bg-blue-700"
-          >
-            🎓 Học sinh
-          </button>
+  {/* MENU */}
+  <div className="space-y-3">
 
-          <button
-            onClick={() => {
-              setPage("camera");
-            }}
-            className="w-full bg-blue-800 p-3 rounded-lg hover:bg-blue-700"
-          >
-            📷 Camera AI
-          </button>
+    <button
+      onClick={() => setPage("dashboard")}
+      className="w-full flex items-center gap-3 bg-blue-800 p-3 rounded-xl hover:bg-blue-700 transition"
+    >
+      📊 Dashboard
+    </button>
 
-        </div>
-      </div>
+    <button
+      onClick={() => setPage("students")}
+      className="w-full flex items-center gap-3 bg-blue-800 p-3 rounded-xl hover:bg-blue-700 transition"
+    >
+      🎓 Học sinh
+    </button>
 
+    <button
+      onClick={() => setPage("camera")}
+      className="w-full flex items-center gap-3 bg-blue-800 p-3 rounded-xl hover:bg-blue-700 transition"
+    >
+      📷 Camera AI
+    </button>
+
+    <button
+      onClick={() => setPage("map")}
+      className="w-full flex items-center gap-3 bg-blue-800 p-3 rounded-lg hover:bg-blue-700 transition"
+    >
+      🗺 Bản đồ trường học
+    </button>
+
+  </div>
+</div>
       {/* MAIN */}
       <div className="flex-1 p-6">
 
         {/* DASHBOARD */}
         {page === "dashboard" && (
-          <div>
-
+          <div className="space-y-6 animate-fade-in">
             <h2 className="text-3xl font-bold mb-6">
               📊 Dashboard
             </h2>
+            <div className="bg-gradient-to-r from-blue-900 to-blue-700 text-white p-6 rounded-2xl mb-6 shadow-lg">
 
-            <div className="grid grid-cols-3 gap-5 mb-6">
+              <h2 className="text-2xl font-bold">
+                🎓 TRƯỜNG THPT SỐ 1 TƯ NGHĨA
+              </h2>
 
-              <div className="bg-white p-6 rounded-xl shadow">
-                <p>Tổng học sinh</p>
-
-                <h3 className="text-3xl font-bold">
-                  {students.length}
-                </h3>
-              </div>
-
-              <div className="bg-white p-6 rounded-xl shadow">
-                <p>Có mặt</p>
-
-                <h3 className="text-3xl font-bold text-green-600">
-                  {present}
-                </h3>
-              </div>
-
-              <div className="bg-white p-6 rounded-xl shadow">
-                <p>Vắng</p>
-
-                <h3 className="text-3xl font-bold text-red-600">
-                  {absent}
-                </h3>
-              </div>
+              <p className="text-blue-100 mt-1">
+                Hệ thống quản lý học sinh & điểm danh thông minh
+              </p>
 
             </div>
 
-            <div className="bg-white p-6 rounded-xl shadow w-96">
+            <div className="grid grid-cols-3 gap-6 mb-6">
+
+  {/* TOTAL */}
+  <div className="bg-white rounded-2xl shadow-xl p-6 border-l-4 border-blue-600 hover:scale-[1.02] transition">
+    <p className="text-gray-500">Tổng học sinh</p>
+    <h3 className="text-3xl font-bold text-blue-600">
+      {students.length}
+    </h3>
+    <p className="text-xs text-gray-400 mt-1">
+      Toàn trường
+    </p>
+  </div>
+
+  {/* PRESENT */}
+  <div className="bg-white rounded-2xl shadow-xl p-6 border-l-4 border-green-600 hover:scale-[1.02] transition">
+    <p className="text-gray-500">Có mặt</p>
+    <h3 className="text-3xl font-bold text-green-600">
+      {present}
+    </h3>
+    <p className="text-xs text-gray-400 mt-1">
+      Đang học
+    </p>
+  </div>
+
+  {/* ABSENT */}
+  <div className="bg-white rounded-2xl shadow-xl p-6 border-l-4 border-red-600 hover:scale-[1.02] transition">
+    <p className="text-gray-500">Vắng</p>
+    <h3 className="text-3xl font-bold text-red-600">
+      {absent}
+    </h3>
+    <p className="text-xs text-gray-400 mt-1">
+      Không có mặt
+    </p>
+  </div>
+
+</div>
+
+            <div className="bg-white p-6 rounded-2xl shadow-lg w-96">
+              <h3 className="text-lg font-bold mb-4 text-blue-900">
+                📊 Tỷ lệ điểm danh
+              </h3>
+            
               <Pie data={chartData} />
+            </div>
+            <div className="bg-white rounded-2xl shadow-lg p-6 mt-6">
+
+  <h3 className="text-lg font-bold mb-4 text-green-700">
+    🏆 Lớp chuyên cần nhất
+  </h3>
+
+  {classRanking.length > 0 && (
+    <div className="text-center">
+
+      <p className="text-2xl font-bold text-blue-900">
+        {classRanking[0].className}
+      </p>
+
+      <p className="text-green-600 font-bold mt-2">
+        {classRanking[0].rate}% có mặt
+      </p>
+
+      <p className="text-sm text-gray-500 mt-1">
+        Tổng: {classRanking[0].total} học sinh
+      </p>
+
+    </div>
+  )}
+
+</div>
+<div className="bg-white rounded-2xl shadow-lg p-6 mt-6">
+
+  <h3 className="text-lg font-bold mb-4 text-red-700">
+    ⚠️ Lớp vắng nhiều nhất
+  </h3>
+
+  {classRanking.length > 0 && (
+    <div className="text-center">
+
+      <p className="text-2xl font-bold text-blue-900">
+        {classRanking[classRanking.length - 1].className}
+      </p>
+
+      <p className="text-red-600 font-bold mt-2">
+        {(100 - classRanking[classRanking.length - 1].rate).toFixed(1)}% vắng
+      </p>
+
+      <p className="text-sm text-gray-500 mt-1">
+        Tổng: {classRanking[classRanking.length - 1].total} học sinh
+      </p>
+
+    </div>
+  )}
+
+</div>
+            <div className="bg-white rounded-2xl shadow-lg p-6 mt-6">
+
+              <h3 className="text-lg font-bold mb-4 text-blue-900">
+                🏫 Thống kê theo lớp
+              </h3>
+
+              <table className="w-full text-left">
+
+                <thead>
+                  <tr className="border-b">
+                    <th className="p-2">Lớp</th>
+                    <th className="p-2">Tổng</th>
+                    <th className="p-2 text-green-600">Có mặt</th>
+                    <th className="p-2 text-red-600">Vắng</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {Object.entries(classStats).map(([cls, data]) => (
+                    <tr key={cls} className="border-b hover:bg-gray-50">
+
+                      <td className="p-2 font-semibold">
+                        {cls}
+                      </td>
+
+                      <td className="p-2">
+                        {data.total}
+                      </td>
+
+                      <td className="p-2 text-green-600 font-bold">
+                        {data.present}
+                      </td>
+
+                      <td className="p-2 text-red-600 font-bold">
+                        {data.absent}
+                      </td>
+
+                    </tr>
+                  ))}
+                </tbody>
+
+              </table>
+
             </div>
 
           </div>
@@ -669,11 +1012,13 @@ const stopCamera = () => {
                 </p>
 
                 <p className="mt-2 text-xl font-bold">
-
                   {faceDetected
                     ? "🟢 Đã phát hiện khuôn mặt"
                     : "🔴 Chưa phát hiện khuôn mặt"}
+                </p>
 
+                <p className="mt-3 text-2xl font-bold text-blue-600">
+                  {studentName}
                 </p>
 
               </div>
@@ -682,9 +1027,17 @@ const stopCamera = () => {
 
           </div>
         )}
+        {page === "map" && (
+          <div>
+            <h2 className="text-3xl font-bold mb-6">
+              🗺 Bản đồ Drone AI
+            </h2>
 
-      </div>
+            <SchoolMap />
+          </div>
+        )}
 
+      </div> {/* end flex container */}
     </div>
   );
 }
